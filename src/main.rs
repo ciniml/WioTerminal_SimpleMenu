@@ -20,12 +20,12 @@ use wio_terminal::hal::{
     time::KiloHertz,
 };
 
-use wio_terminal::spi_master_lcd;
+use wio_terminal::{spi_master_lcd, spi_master_rtl8720};
 
 use ili9341::{Ili9341, Orientation};
 use embedded_graphics::{
     fonts::{Font12x16, Text},
-    pixelcolor::Rgb565,
+    pixelcolor::{Rgb565, Rgb888},
     prelude::*,
     primitives::Circle,
     style::{PrimitiveStyle, TextStyle},
@@ -45,13 +45,19 @@ fn main() -> ! {
     clocks.configure_gclk_divider_and_source(hal::clock::ClockGenId::GCLK0, 1, hal::clock::ClockSource::DPLL0, false);
 
     let mut pins = Pins::new(peripherals.PORT);
+    
     let mut led = pins.user_led.into_push_pull_output(&mut pins.port);
+    
     let mut lcd_cs = pins.lcd_cs.into_push_pull_output(&mut pins.port);
     let mut lcd_dc = pins.lcd_dc.into_push_pull_output(&mut pins.port);
     let mut lcd_reset = pins.lcd_reset.into_push_pull_output(&mut pins.port);
     let mut lcd_backlight_ctr = pins.lcd_backlight_ctr.into_push_pull_output(&mut pins.port);
-
     let mut spi_lcd = spi_master_lcd(&mut clocks, KiloHertz(60000u32), peripherals.SERCOM7, &mut peripherals.MCLK, pins.lcd_sck, pins.lcd_mosi, pins.lcd_miso, &mut pins.port);
+    
+    let mut rtl_cs = pins.rtl8720d_hspi_cs.into_push_pull_output(&mut pins.port);
+    let mut spi_rtl = spi_master_rtl8720(&mut clocks, KiloHertz(60000u32), peripherals.SERCOM0, &mut peripherals.MCLK, pins.rtl8720d_hspi_clk, pins.rtl8720d_hspi_mosi, pins.rtl8720d_hspi_miso, &mut pins.port);
+    
+    
     let mut delay = Delay::new(core.SYST, &mut clocks);
 
     let mut lcd = Ili9341::new_spi(spi_lcd, lcd_cs, lcd_dc, lcd_reset, &mut delay).unwrap();
