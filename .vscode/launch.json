@@ -47,6 +47,40 @@
                     { "type": "console", "label": "ITM", "port": 0 }
                 ]
             }
+        },
+        {
+            "name": "(gdb) launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/thumbv7em-none-eabihf/debug/simple-menu",
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": true,
+            "targetArchitecture": "arm",
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "gdb の再フォーマットを有効にする",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "load symbols",
+                    "text": "symbol-file ${workspaceFolder}/target/thumbv7em-none-eabihf/debug/simple-menu"
+                }
+            ],
+            "miDebuggerPath": "/usr/bin/gdb-multiarch",
+            "miDebuggerServerAddress": "localhost:3333",
+            "miDebuggerArgs": "",
+            "debugServerPath": "${env:HOME}/openocd/bin/openocd",
+            "debugServerArgs": "-f interface/cmsis-dap.cfg -f ${workspaceFolder}/openocd_atsamd51.tcl -c \"reset halt; flash write_image erase ${workspaceFolder}/target/thumbv7em-none-eabihf/debug/simple-menu\" -c \"echo {gdb server started}\"",
+            "serverStarted": "gdb server started",
+            "serverLaunchTimeout": 30000,
+            "filterStderr": true,
+            "filterStdout": false,
+            "logging": {
+                "engineLogging": false
+            },
+            "preLaunchTask": "make"
         }
     ]
 }

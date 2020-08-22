@@ -13,7 +13,11 @@ panic-halt = "0.2.0"
 ili9341 = "0.3.0"
 wio_terminal = { path = "atsamd-rs/boards/wio_terminal"}
 embedded-graphics = "0.6.2"
-#atsamd-hal = { path = "atsamd-rs/hal", features = ["samd51p19a"] }
+embedded-hal = "0.2.4"
+embedded-dma = "0.1.0"
+nb = { version = "1.0.0", default-features = false }
+atsamd-hal = { path = "atsamd-rs/hal", features = ["samd51p19a"] }
+atsamd51p19a = { path = "atsamd-rs/pac/atsamd51p19a" }
 
 # Uncomment for the panic example.
 # panic-itm = "0.4.1"
