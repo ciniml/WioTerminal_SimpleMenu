@@ -2,7 +2,7 @@
 
 PROJECT_NAME := simple-menu
 
-SRCS := $(wildcard *.rs) Cargo.toml
+SRCS := $(wildcard **/*.rs) Cargo.toml
 
 all: $(PROJECT_NAME).bin
 
