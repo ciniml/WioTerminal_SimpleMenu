@@ -28,7 +28,12 @@ use embedded_graphics::{
 use ili9341::{Ili9341, Orientation};
 
 mod esp_at;
-use esp_at::{Dmac, AsyncOperation, OperationStatus, AsyncOperationError};
+mod atsamd_dmac;
+mod async_operation;
+
+use atsamd_dmac::{Dmac};
+use async_operation::{AsyncOperation, OperationStatus, AsyncOperationError};
+
 use embedded_dma::*;
 use core::cell::RefCell;
 
