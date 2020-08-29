@@ -1,3 +1,6 @@
 [submodule "atsamd-rs"]
 	path = atsamd-rs
 	url = https://github.com/atsamd-rs/atsamd.git
+[submodule "atat"]
+	path = atat
+	url = https://github.com/ciniml/atat

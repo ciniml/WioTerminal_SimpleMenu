@@ -12,6 +12,7 @@ runner = "gdb-multiarch -q -x openocd.gdb"
 rustflags = [
   # LLD (shipped with the Rust toolchain) is used as the default linker
   "-C", "link-arg=-Tlink.x",
+  "--cfg", "has_atomics",
 
   # if you run into problems with LLD switch to the GNU linker by commenting out
   # this line
