@@ -21,6 +21,7 @@ atat = { version = "0.4.2" }
 serde = { version = "1.0.0", default-features = false }
 serde_at = { version = "0.4.2", default-features = false }
 void = { version = "1.0.2", default-features = false }
+cortex-m-rtic = { version = "0.5.5" }
 atsamd-hal = { path = "atsamd-rs/hal", features = ["samd51p19a", "unproven"] }
 atsamd51p19a = { path = "atsamd-rs/pac/atsamd51p19a" }
 
