@@ -1,12 +1,12 @@
 #![no_std]
 
-use embedded_hal::spi::{FullDuplex};
-use core::pin::Pin;
-use embedded_dma::*;
+use embedded_hal::spi::FullDuplex;
+
 use atsamd_hal::spi_common::CommonSpi;
-use atsamd_hal::clock::GenericClockController;
-use atsamd51p19a::{DMAC, MCLK, dmac::channel::chctrla::*};
-use core::{convert::TryFrom, convert::TryInto, cell::RefCell};
+use embedded_dma::*;
+
+use atsamd51p19a::{dmac::channel::chctrla::*, DMAC, MCLK};
+use core::{cell::RefCell, convert::TryFrom, convert::TryInto};
 
 use crate::async_operation::*;
 
@@ -33,9 +33,11 @@ pub struct DmacMemTransfer<Channel, SourceBuffer, DestinationBuffer> {
     destination: DestinationBuffer,
 }
 
-impl<Channel: DmacChannelTrait, SourceBuffer, DestinationBuffer> AsyncOperation<Channel> for DmacMemTransfer<Channel, SourceBuffer, DestinationBuffer> {
+impl<Channel: DmacChannelTrait, SourceBuffer, DestinationBuffer> AsyncOperation<Channel>
+    for DmacMemTransfer<Channel, SourceBuffer, DestinationBuffer>
+{
     fn poll(self: &Self) -> OperationStatus {
-        if self.channel.is_transfer_in_progress()  {
+        if self.channel.is_transfer_in_progress() {
             OperationStatus::Running
         } else {
             OperationStatus::Completed
@@ -48,7 +50,6 @@ impl<Channel: DmacChannelTrait, SourceBuffer, DestinationBuffer> AsyncOperation<
     fn cancel(self: &mut Self) -> Result<(), AsyncOperationError> {
         Err(AsyncOperationError::NotSupported)
     }
-
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -60,12 +61,21 @@ pub enum DmacError {
 impl Dmac {
     pub fn new(dmac: DMAC, mclk: &mut MCLK) -> Dmac {
         // Enable DMAC clock.
-        mclk.ahbmask.modify(|_, w| { w.dmac_().set_bit()});
+        mclk.ahbmask.modify(|_, w| w.dmac_().set_bit());
         // Reset the DMAC
-        dmac.ctrl.write(|w| { w.swrst().set_bit() });
+        dmac.ctrl.write(|w| w.swrst().set_bit());
         while dmac.ctrl.read().swrst().bit_is_set() {}
         // Enable all priority levels.
-        dmac.ctrl.modify(|_, w| { w.lvlen0().set_bit().lvlen1().set_bit().lvlen2().set_bit().lvlen3().set_bit() });
+        dmac.ctrl.modify(|_, w| {
+            w.lvlen0()
+                .set_bit()
+                .lvlen1()
+                .set_bit()
+                .lvlen2()
+                .set_bit()
+                .lvlen3()
+                .set_bit()
+        });
         // clear base adresses.
         dmac.baseaddr.reset();
         dmac.wrbaddr.reset();
@@ -82,44 +92,58 @@ impl Dmac {
     fn ensure_dma_enabled(self: &Self) {
         let dmac = self.dmac.borrow_mut();
         if dmac.ctrl.read().dmaenable().bit_is_clear() {
-            if dmac.baseaddr.read().baseaddr().bits() == 0  {
+            if dmac.baseaddr.read().baseaddr().bits() == 0 {
                 let descriptors = self.descriptors.as_ptr();
-                dmac.baseaddr.write(|w| unsafe { w.baseaddr().bits(descriptors as u32) })
+                dmac.baseaddr
+                    .write(|w| unsafe { w.baseaddr().bits(descriptors as u32) })
             }
-            if dmac.wrbaddr.read().wrbaddr().bits() == 0  {
+            if dmac.wrbaddr.read().wrbaddr().bits() == 0 {
                 let descriptors = self.write_backs.as_ptr();
-                dmac.wrbaddr.write(|w| unsafe { w.wrbaddr().bits(descriptors as u32) })
+                dmac.wrbaddr
+                    .write(|w| unsafe { w.wrbaddr().bits(descriptors as u32) })
             }
-            dmac.ctrl.modify(|_, w| { w.dmaenable().set_bit() });
+            dmac.ctrl.modify(|_, w| w.dmaenable().set_bit());
         }
     }
 
-    pub fn allocate_channel(self: &Self, index: u8) -> DmacChannel {
+    pub fn allocate_channel(self: &Self, _index: u8) -> DmacChannel {
         DmacChannel::new(self, 0)
     }
 }
-
 
 trait DmacChannelTrait {
     fn is_transfer_in_progress(self: &Self) -> bool;
     fn has_transfer_error(self: &Self) -> bool;
 }
 
-impl<'dmac> DmacChannelTrait for DmacChannel<'dmac>  {
+impl<'dmac> DmacChannelTrait for DmacChannel<'dmac> {
     fn is_transfer_in_progress(self: &Self) -> bool {
         let dmac_reg = self.dmac.borrow();
-        dmac_reg.channel[self.index as usize].chstatus.read().busy().bit_is_set()
+        dmac_reg.channel[self.index as usize]
+            .chstatus
+            .read()
+            .busy()
+            .bit_is_set()
     }
     fn has_transfer_error(self: &Self) -> bool {
-        let status = self.dmac.borrow().channel[self.index as usize].chstatus.read();
+        let status = self.dmac.borrow().channel[self.index as usize]
+            .chstatus
+            .read();
         status.crcerr().bit_is_set() || status.ferr().bit_is_set()
     }
 }
 impl<'dmac> DmacChannel<'dmac> {
     pub fn new(dmac: &'dmac Dmac, index: u8) -> DmacChannel<'dmac> {
         // Reset the channel
-        dmac.dmac.borrow_mut().channel[index as usize].chctrla.modify(|_, w| { w.swrst().set_bit() });
-        while dmac.dmac.borrow().channel[index as usize].chctrla.read().swrst().bit_is_set() {}
+        dmac.dmac.borrow_mut().channel[index as usize]
+            .chctrla
+            .modify(|_, w| w.swrst().set_bit());
+        while dmac.dmac.borrow().channel[index as usize]
+            .chctrla
+            .read()
+            .swrst()
+            .bit_is_set()
+        {}
         // Ensure that DMA is enabled.
         dmac.ensure_dma_enabled();
 
@@ -130,40 +154,63 @@ impl<'dmac> DmacChannel<'dmac> {
         }
     }
 
-    
-    pub fn transfer_mem<Word: WordType, Source: ReadBuffer<Word=Word>, Destination: WriteBuffer<Word=Word>>(self: Self, source: Source, mut destination: Destination, count: u16) -> Result<DmacMemTransfer<Self, Source, Destination>, DmacError> {
+    pub fn transfer_mem<
+        Word: WordType,
+        Source: ReadBuffer<Word = Word>,
+        Destination: WriteBuffer<Word = Word>,
+    >(
+        self: Self,
+        source: Source,
+        mut destination: Destination,
+        count: u16,
+    ) -> Result<DmacMemTransfer<Self, Source, Destination>, DmacError> {
         let mut descriptors = self.descriptors.borrow_mut();
         let descriptor = descriptors.get_mut(self.index as usize).unwrap();
         unsafe {
             let read_buffer = source.read_buffer();
             let write_buffer = destination.write_buffer();
-            if read_buffer.1 < count as usize || write_buffer.1 < count as usize  {
+            if read_buffer.1 < count as usize || write_buffer.1 < count as usize {
                 return Err(DmacError::CounterTooLong);
             }
             descriptor.set_srcaddr(read_buffer.0, count);
             descriptor.set_dstaddr(write_buffer.0, count);
             descriptor.set_descaddr(None);
             descriptor.btcnt = count as u16;
-            descriptor.btctrl.set_evosel(EVOSEL::BLOCK)
-                             .set_blockact(BLOCKACT::NOACT)
-                             .set_beatsize(Word::beatsize())
-                             .set_srcinc()
-                             .set_dstinc()
-                             .set_stepsel(STEPSEL::DST)
-                             .set_stepsize(0)
-                             .set_valid();
-            self.dmac.borrow_mut().channel[self.index as usize].chctrla.write(|w| { w.swrst().set_bit() });
-            while self.dmac.borrow().channel[self.index as usize].chctrla.read().swrst().bit_is_set() {}
-            
+            descriptor
+                .btctrl
+                .set_evosel(EVOSEL::BLOCK)
+                .set_blockact(BLOCKACT::NOACT)
+                .set_beatsize(Word::beatsize())
+                .set_srcinc()
+                .set_dstinc()
+                .set_stepsel(STEPSEL::DST)
+                .set_stepsize(0)
+                .set_valid();
+            self.dmac.borrow_mut().channel[self.index as usize]
+                .chctrla
+                .write(|w| w.swrst().set_bit());
+            while self.dmac.borrow().channel[self.index as usize]
+                .chctrla
+                .read()
+                .swrst()
+                .bit_is_set()
+            {}
+
             let dmac = self.dmac.borrow_mut();
             dmac.channel[self.index as usize].chctrla.write(|w| {
-                w   .trigsrc().variant(TRIGSRC_A::DISABLE)
-                    .trigact().variant(TRIGACT_A::TRANSACTION)
-                    .burstlen().variant(BURSTLEN_A::SINGLE)
-                    .threshold().variant(THRESHOLD_A::_1BEAT)
-                    .enable().set_bit()
+                w.trigsrc()
+                    .variant(TRIGSRC_A::DISABLE)
+                    .trigact()
+                    .variant(TRIGACT_A::TRANSACTION)
+                    .burstlen()
+                    .variant(BURSTLEN_A::SINGLE)
+                    .threshold()
+                    .variant(THRESHOLD_A::_1BEAT)
+                    .enable()
+                    .set_bit()
             });
-            dmac.swtrigctrl.write(|w| unsafe { w.bits(1u32 << self.index)});
+            dmac.swtrigctrl
+                .write(|w| unsafe { w.bits(1u32 << self.index) });
         }
         Ok(DmacMemTransfer {
             channel: self,
@@ -172,36 +219,56 @@ impl<'dmac> DmacChannel<'dmac> {
         })
     }
 
-    pub unsafe fn read_peripheral<Word: WordType, Destination: WriteBuffer<Word=Word>>(self: Self, source: *const Word, trigger: TRIGSRC, mut destination: Destination, count: u16) -> Result<DmacTransfer<Self, Destination>, DmacError> {
+    pub unsafe fn read_peripheral<Word: WordType, Destination: WriteBuffer<Word = Word>>(
+        self: Self,
+        source: *const Word,
+        trigger: TRIGSRC,
+        mut destination: Destination,
+        count: u16,
+    ) -> Result<DmacTransfer<Self, Destination>, DmacError> {
         let mut descriptors = self.descriptors.borrow_mut();
         let descriptor = descriptors.get_mut(self.index as usize).unwrap();
         unsafe {
             let write_buffer = destination.write_buffer();
-            if write_buffer.1 < count as usize  {
+            if write_buffer.1 < count as usize {
                 return Err(DmacError::CounterTooLong);
             }
             descriptor.set_srcaddr(source, count);
             descriptor.set_dstaddr(write_buffer.0, count);
             descriptor.set_descaddr(None);
             descriptor.btcnt = count as u16;
-            descriptor.btctrl.set_evosel(EVOSEL::BLOCK)
-                             .set_blockact(BLOCKACT::NOACT)
-                             .set_beatsize(Word::beatsize())
-                             .clear_srcinc()
-                             .set_dstinc()
-                             .set_stepsel(STEPSEL::DST)
-                             .set_stepsize(0)
-                             .set_valid();
-            self.dmac.borrow_mut().channel[self.index as usize].chctrla.write(|w| { w.swrst().set_bit() });
-            while self.dmac.borrow().channel[self.index as usize].chctrla.read().swrst().bit_is_set() {}
-            
+            descriptor
+                .btctrl
+                .set_evosel(EVOSEL::BLOCK)
+                .set_blockact(BLOCKACT::NOACT)
+                .set_beatsize(Word::beatsize())
+                .clear_srcinc()
+                .set_dstinc()
+                .set_stepsel(STEPSEL::DST)
+                .set_stepsize(0)
+                .set_valid();
+            self.dmac.borrow_mut().channel[self.index as usize]
+                .chctrla
+                .write(|w| w.swrst().set_bit());
+            while self.dmac.borrow().channel[self.index as usize]
+                .chctrla
+                .read()
+                .swrst()
+                .bit_is_set()
+            {}
+
             let dmac = self.dmac.borrow_mut();
             dmac.channel[self.index as usize].chctrla.write(|w| {
-                w   .trigsrc().bits(trigger as u8)
-                    .trigact().variant(TRIGACT_A::BURST)
-                    .burstlen().variant(BURSTLEN_A::SINGLE)
-                    .threshold().variant(THRESHOLD_A::_1BEAT)
-                    .enable().set_bit()
+                w.trigsrc()
+                    .bits(trigger as u8)
+                    .trigact()
+                    .variant(TRIGACT_A::BURST)
+                    .burstlen()
+                    .variant(BURSTLEN_A::SINGLE)
+                    .threshold()
+                    .variant(THRESHOLD_A::_1BEAT)
+                    .enable()
+                    .set_bit()
             });
         }
         Ok(DmacTransfer {
@@ -210,36 +277,56 @@ impl<'dmac> DmacChannel<'dmac> {
         })
     }
 
-    pub unsafe fn write_peripheral<Word: WordType, Source: ReadBuffer<Word=Word>>(self: Self, source: Source, destination: *const Word, trigger: TRIGSRC, count: u16) -> Result<DmacTransfer<Self, Source>, DmacError> {
+    pub unsafe fn write_peripheral<Word: WordType, Source: ReadBuffer<Word = Word>>(
+        self: Self,
+        source: Source,
+        destination: *const Word,
+        trigger: TRIGSRC,
+        count: u16,
+    ) -> Result<DmacTransfer<Self, Source>, DmacError> {
         let mut descriptors = self.descriptors.borrow_mut();
         let descriptor = descriptors.get_mut(self.index as usize).unwrap();
         unsafe {
             let read_buffer = source.read_buffer();
-            if read_buffer.1 < count as usize  {
+            if read_buffer.1 < count as usize {
                 return Err(DmacError::CounterTooLong);
             }
             descriptor.set_srcaddr(read_buffer.0, count);
             descriptor.set_dstaddr(destination, count);
             descriptor.set_descaddr(None);
             descriptor.btcnt = count as u16;
-            descriptor.btctrl.set_evosel(EVOSEL::BLOCK)
-                             .set_blockact(BLOCKACT::NOACT)
-                             .set_beatsize(Word::beatsize())
-                             .set_srcinc()
-                             .clear_dstinc()
-                             .set_stepsel(STEPSEL::SRC)
-                             .set_stepsize(0)
-                             .set_valid();
-            self.dmac.borrow_mut().channel[self.index as usize].chctrla.write(|w| { w.swrst().set_bit() });
-            while self.dmac.borrow().channel[self.index as usize].chctrla.read().swrst().bit_is_set() {}
-            
+            descriptor
+                .btctrl
+                .set_evosel(EVOSEL::BLOCK)
+                .set_blockact(BLOCKACT::NOACT)
+                .set_beatsize(Word::beatsize())
+                .set_srcinc()
+                .clear_dstinc()
+                .set_stepsel(STEPSEL::SRC)
+                .set_stepsize(0)
+                .set_valid();
+            self.dmac.borrow_mut().channel[self.index as usize]
+                .chctrla
+                .write(|w| w.swrst().set_bit());
+            while self.dmac.borrow().channel[self.index as usize]
+                .chctrla
+                .read()
+                .swrst()
+                .bit_is_set()
+            {}
+
             let dmac = self.dmac.borrow_mut();
             dmac.channel[self.index as usize].chctrla.write(|w| {
-                w   .trigsrc().bits(trigger as u8)
-                    .trigact().variant(TRIGACT_A::BURST)
-                    .burstlen().variant(BURSTLEN_A::SINGLE)
-                    .threshold().variant(THRESHOLD_A::_1BEAT)
-                    .enable().set_bit()
+                w.trigsrc()
+                    .bits(trigger as u8)
+                    .trigact()
+                    .variant(TRIGACT_A::BURST)
+                    .burstlen()
+                    .variant(BURSTLEN_A::SINGLE)
+                    .threshold()
+                    .variant(THRESHOLD_A::_1BEAT)
+                    .enable()
+                    .set_bit()
             });
         }
         Ok(DmacTransfer {
@@ -351,7 +438,7 @@ pub struct DmaDescriptor {
 
 impl DmaDescriptor {
     fn new() -> Self {
-        unsafe{
+        unsafe {
             Self {
                 btctrl: core::mem::zeroed(),
                 btcnt: 0,
@@ -362,11 +449,19 @@ impl DmaDescriptor {
         }
     }
 
-    unsafe fn set_srcaddr<Word: WordType>(self: &mut Self, buffer: *const Word, transfer_count: u16) -> &mut Self {
+    unsafe fn set_srcaddr<Word: WordType>(
+        self: &mut Self,
+        buffer: *const Word,
+        transfer_count: u16,
+    ) -> &mut Self {
         self.srcaddr = (buffer as u32) + ((transfer_count as usize) * Word::word_size()) as u32;
         self
     }
-    unsafe fn set_dstaddr<Word: WordType>(self: &mut Self, buffer: *const Word, transfer_count: u16) -> &mut Self {
+    unsafe fn set_dstaddr<Word: WordType>(
+        self: &mut Self,
+        buffer: *const Word,
+        transfer_count: u16,
+    ) -> &mut Self {
         self.dstaddr = (buffer as u32) + ((transfer_count as usize) * Word::word_size()) as u32;
         self
     }
@@ -402,7 +497,6 @@ impl TryFrom<u16> for EVOSEL {
             _ => Err(()),
         }
     }
-    
 }
 
 #[repr(u16)]
@@ -439,21 +533,33 @@ pub trait WordType {
 }
 impl WordType for u8 {
     #[inline(always)]
-    fn word_size() -> usize { 1 }
+    fn word_size() -> usize {
+        1
+    }
     #[inline(always)]
-    fn beatsize() -> BEATSIZE { BEATSIZE::BYTE }
+    fn beatsize() -> BEATSIZE {
+        BEATSIZE::BYTE
+    }
 }
 impl WordType for u16 {
     #[inline(always)]
-    fn word_size() -> usize { 2 }
+    fn word_size() -> usize {
+        2
+    }
     #[inline(always)]
-    fn beatsize() -> BEATSIZE { BEATSIZE::HWORD }
+    fn beatsize() -> BEATSIZE {
+        BEATSIZE::HWORD
+    }
 }
 impl WordType for u32 {
     #[inline(always)]
-    fn word_size() -> usize { 4 }
+    fn word_size() -> usize {
+        4
+    }
     #[inline(always)]
-    fn beatsize() -> BEATSIZE { BEATSIZE::WORD }
+    fn beatsize() -> BEATSIZE {
+        BEATSIZE::WORD
+    }
 }
 
 impl TryFrom<u16> for BEATSIZE {
@@ -487,15 +593,30 @@ impl TryFrom<u16> for STEPSEL {
 
 macro_rules! define_field {
     ($getter_name:ident, $setter_name:ident: ($field_type:ty, $bit:expr, $width:expr)) => {
-        fn $getter_name(self: &Self) -> $field_type { ((self.value >> $bit) & ((1u16 << $bit) - 1u16)).try_into().unwrap() }
-        fn $setter_name(self: &mut Self, value: $field_type) -> &mut Self { self.value = (self.value & !(((1u16 << $bit) - 1u16) << $bit)) | (((value as u16) & ((1u16 << $bit) - 1u16)) << $bit); self }
+        fn $getter_name(self: &Self) -> $field_type {
+            ((self.value >> $bit) & ((1u16 << $bit) - 1u16))
+                .try_into()
+                .unwrap()
+        }
+        fn $setter_name(self: &mut Self, value: $field_type) -> &mut Self {
+            self.value = (self.value & !(((1u16 << $bit) - 1u16) << $bit))
+                | (((value as u16) & ((1u16 << $bit) - 1u16)) << $bit);
+            self
+        }
     };
     ($is_name:ident, $set_name:ident, $clear_name:ident: ($bit:expr)) => {
-        fn $is_name(self: &Self) -> bool { (self.value & (1u16 << $bit)) != 0 }
-        fn $set_name(self: &mut Self) -> &mut Self { self.value |= (1u16 << $bit); self }
-        fn $clear_name(self: &mut Self) -> &mut Self { self.value &= !(1u16 << $bit); self }
+        fn $is_name(self: &Self) -> bool {
+            (self.value & (1u16 << $bit)) != 0
+        }
+        fn $set_name(self: &mut Self) -> &mut Self {
+            self.value |= (1u16 << $bit);
+            self
+        }
+        fn $clear_name(self: &mut Self) -> &mut Self {
+            self.value &= !(1u16 << $bit);
+            self
+        }
     };
-    
 }
 
 impl BTCTRL {
