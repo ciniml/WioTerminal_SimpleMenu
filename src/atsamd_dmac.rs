@@ -251,6 +251,7 @@ impl<'dmac> DmacChannel<'dmac> {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+#[allow(non_camel_case_types)]
 pub enum TRIGSRC {
     DISABLE = 0x00,
     RTC_TIMESTAMP = 0x01,
