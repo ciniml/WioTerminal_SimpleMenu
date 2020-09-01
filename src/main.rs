@@ -104,7 +104,7 @@ const APP: () = {
         client: RtlAtClient,
         ingress: atat::IngressManager<U256, atat::NoopUrcMatcher>,
     }
-    #[init(spawn = [comm_loop])]
+    #[init(spawn = [comm_loop, ui_loop])]
     fn init(context: init::Context) -> init::LateResources {
         let core = context.core;
         let mut peripherals = context.device;
@@ -226,6 +226,8 @@ const APP: () = {
         lcd.set_orientation(Orientation::LandscapeFlipped).unwrap();
         lcd_backlight_ctr.set_high().unwrap();
 
+        context.spawn.ui_loop().unwrap();
+
         init::LateResources {
             lcd: lcd,
             led: led,
@@ -236,10 +238,10 @@ const APP: () = {
         }
     }
 
-    #[task(spawn = [comm_loop], resources = [rtl_transport])]
+    #[task(spawn = [comm_loop], resources = [rtl_transport, client, ingress])]
     fn comm_loop(context: comm_loop::Context) {
         context.resources.rtl_transport.process();
-
+        
         context.spawn.comm_loop().unwrap();
     }
 
