@@ -45,7 +45,7 @@ pub struct NoResponse;
 #[at_cmd("AT", NoResponse, timeout_ms = 1000)]
 pub struct AT;
 
-struct RTLTimer<Timer> {
+pub struct RTLTimer<Timer> {
     timer: Timer,
 }
 impl<Timer: CountDown<Time=Nanoseconds>> RTLTimer<Timer> {
@@ -78,6 +78,7 @@ type RtlSpiMaster = sercom::SPIMaster0<
     sercom::Sercom0Pad1<gpio::Pb25<gpio::PfC>>,
 >;
 type RtlSpiTransport = esp_at::WioTerminalSPITransport<
+    'static,
     RtlSpiMaster, 
     gpio::Pc25<gpio::Output<gpio::PushPull>>, 
     gpio::Pc20<gpio::Input<gpio::Floating>>, 
@@ -104,8 +105,9 @@ const APP: () = {
         lcd: Lcd,
         led: gpio::Pa15<gpio::Output<gpio::PushPull>>,
         rtl_transport: RtlSpiTransport,
-        rtl_timer: RTLTimer<TimerCounter<atsamd51p19a::TC3>>,
         delay: Delay,
+        client: RtlAtClient,
+        ingress: atat::IngressManager<U256, atat::NoopUrcMatcher>,
     }
     #[init(spawn = [comm_loop])]
     fn init(context: init::Context) -> init::LateResources {
@@ -159,13 +161,34 @@ const APP: () = {
         rtl_chip_pu.set_low();
         delay.delay_ms(100u16);
         rtl_chip_pu.set_high();
-        let mut rtl_transport = WioTerminalSPITransport::new(spi_rtl, rtl_cs, rtl_irq0, rtl_sync);
+
+        static mut RTL_READ_QUEUE: esp_at::ReadQueue = Queue(heapless::i::Queue::u8());
+        static mut RTL_WRITE_QUEUE: esp_at::WriteQueue = Queue(heapless::i::Queue::u8());
+        let (read_producer, read_consumer) = unsafe {RTL_READ_QUEUE.split()};
+        let (write_producer, write_consumer) = unsafe{RTL_WRITE_QUEUE.split()};
+        let mut rtl_transport = WioTerminalSPITransport::new(spi_rtl, rtl_cs, rtl_irq0, rtl_sync, read_producer, write_consumer);
         
         // Initialize ATAT client for RTL8720D
         let rtl_timer = TimerCounter::tc3_(&tc2_tc3, peripherals.TC3, &mut peripherals.MCLK);
         let mut rtl_timer = RTLTimer::new(rtl_timer);
         rtl_timer.start(1000u32);
         
+        let rtl_config: atat::Config = atat::Config::default();
+            
+        static mut RES_QUEUE: ResQueue<U256, U5> = Queue(heapless::i::Queue::u8());
+        static mut URC_QUEUE: UrcQueue<U256, U10> = Queue(heapless::i::Queue::u8());
+        static mut COM_QUEUE: ComQueue<U3> = Queue(heapless::i::Queue::u8());
+        let queues = Queues {
+            res_queue: unsafe { RES_QUEUE.split() },
+            urc_queue: unsafe { URC_QUEUE.split() },
+            com_queue: unsafe { COM_QUEUE.split() },
+        };
+        let rx = esp_at::WioTerminalSPITransportRx::new(read_consumer);
+        let tx = esp_at::WioTerminalSPITransportTx::new(write_producer);
+        let (mut client, ingress) =
+            ClientBuilder::new(tx, rtl_timer, atat::Config::new(atat::Mode::Timeout))
+                .with_custom_urc_matcher(NoopUrcMatcher{})
+                .build(queues);
         // let dmac = Dmac::new(peripherals.DMAC, &mut peripherals.MCLK);
         // let channel = dmac.allocate_channel(0);
         // let source = RefCell::new([0xaau8; 1024]);
@@ -205,34 +228,14 @@ const APP: () = {
             lcd: lcd,
             led: led,
             rtl_transport: rtl_transport,
-            rtl_timer: rtl_timer,
             delay: delay,
+            client: client,
+            ingress: ingress,
         }
     }
 
-    #[task(spawn = [comm_loop], resources = [rtl_transport, rtl_timer])]
+    #[task(spawn = [comm_loop], resources = [rtl_transport])]
     fn comm_loop(context: comm_loop::Context) {
-        static mut client: Option<RtlAtClient> = None;
-        static mut ingress: Option<atat::IngressManager<U256, NoopUrcMatcher>> = None;
-        if client.is_none() {
-            let rtl_config: atat::Config = atat::Config::default();
-            
-            static mut RES_QUEUE: ResQueue<U256, U5> = Queue(heapless::i::Queue::u8());
-            static mut URC_QUEUE: UrcQueue<U256, U10> = Queue(heapless::i::Queue::u8());
-            static mut COM_QUEUE: ComQueue<U3> = Queue(heapless::i::Queue::u8());
-            let queues = Queues {
-                res_queue: unsafe { RES_QUEUE.split() },
-                urc_queue: unsafe { URC_QUEUE.split() },
-                com_queue: unsafe { COM_QUEUE.split() },
-            };
-            let (mut tx, mut rx) = context.resources.rtl_transport.split();
-            let (mut client_, ingress_) =
-                ClientBuilder::new(tx, *context.resources.rtl_timer, atat::Config::new(atat::Mode::Timeout))
-                    .with_custom_urc_matcher(NoopUrcMatcher{})
-                    .build(queues);
-            *client = Some(client_);
-            *ingress = Some(ingress_);
-        }
         context.resources.rtl_transport.process();
 
         context.spawn.comm_loop().unwrap();

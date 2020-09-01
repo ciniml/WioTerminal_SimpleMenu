@@ -12,10 +12,15 @@ pub enum TransportError {
     Busy,
 }
 
-type ReadQueue = Queue<u8, heapless::consts::U256, u8>;
-type WriteQueue = Queue<u8, heapless::consts::U256, u8>;
+pub type ReadQueue = Queue<u8, heapless::consts::U256, u8>;
+pub type ReadProducer<'a> = Producer<'a, u8, heapless::consts::U256, u8>;
+pub type ReadConsumer<'a> = Consumer<'a, u8, heapless::consts::U256, u8>;
+pub type WriteQueue = Queue<u8, heapless::consts::U256, u8>;
+pub type WriteProducer<'a> = Producer<'a, u8, heapless::consts::U256, u8>;
+pub type WriteConsumer<'a> = Consumer<'a, u8, heapless::consts::U256, u8>;
 
-pub struct WioTerminalSPITransport<Spi, CsPin, IrqPin, SyncPin> 
+
+pub struct WioTerminalSPITransport<'queue, Spi, CsPin, IrqPin, SyncPin> 
     where   Spi: spi::Transfer<u8> + spi::Write<u8>,
             CsPin: OutputPin,
             IrqPin: InputPin,
@@ -25,8 +30,8 @@ pub struct WioTerminalSPITransport<Spi, CsPin, IrqPin, SyncPin>
     cs_pin: CsPin,
     irq_pin: IrqPin,
     sync_pin: SyncPin,
-    rq: ReadQueue,
-    wq: WriteQueue,
+    rq: ReadProducer<'queue>,
+    wq: WriteConsumer<'queue>,
     state: State,
     buffer: [u8; 1024],
 }
@@ -71,20 +76,20 @@ impl <Func: FnMut()> Drop for ScopedGuard<Func> {
     }
 }
 
-impl <Spi, CsPin, IrqPin, SyncPin>  WioTerminalSPITransport<Spi, CsPin, IrqPin, SyncPin> 
+impl <'queue, Spi, CsPin, IrqPin, SyncPin>  WioTerminalSPITransport<'queue, Spi, CsPin, IrqPin, SyncPin> 
     where   Spi: spi::Transfer<u8> + spi::Write<u8>,
             CsPin: OutputPin,
             IrqPin: InputPin,
             SyncPin: InputPin,
 {
-    pub fn new(spi: Spi, cs_pin: CsPin, irq_pin: IrqPin, sync_pin: SyncPin) -> Self {
+    pub fn new(spi: Spi, cs_pin: CsPin, irq_pin: IrqPin, sync_pin: SyncPin, rq: ReadProducer<'queue>, wq: WriteConsumer<'queue>) -> Self {
         Self {
             spi: spi,
             cs_pin: cs_pin,
             irq_pin: irq_pin,
             sync_pin: sync_pin,
-            rq: Queue::u8(),
-            wq: Queue::u8(),
+            rq: rq,
+            wq: wq,
             state: State::Idle,
             buffer: [0u8; 1024],
         }
@@ -104,8 +109,7 @@ impl <Spi, CsPin, IrqPin, SyncPin>  WioTerminalSPITransport<Spi, CsPin, IrqPin, 
             match self.state {
                 State::Idle => {
                     self.deassert_cs();
-                    let wq = self.wq.split().1;
-                    if wq.ready() {
+                    if self.wq.ready() {
                         self.state = State::IssueWriteData;
                     } else if let Ok(pin) = self.irq_pin.is_high() {
                         if pin {
@@ -189,9 +193,8 @@ impl <Spi, CsPin, IrqPin, SyncPin>  WioTerminalSPITransport<Spi, CsPin, IrqPin, 
                     }
                     
                     // Enqueue data in the buffer
-                    let mut rq = self.rq.split().0;
                     while in_buffer_offset < in_buffer_len {
-                        if let Err(e) = rq.enqueue(self.buffer[in_buffer_offset as usize]) {
+                        if let Err(e) = self.rq.enqueue(self.buffer[in_buffer_offset as usize]) {
                             break
                         }
                         in_buffer_offset += 1;
@@ -207,9 +210,8 @@ impl <Spi, CsPin, IrqPin, SyncPin>  WioTerminalSPITransport<Spi, CsPin, IrqPin, 
                 },
                 State::IssueWriteData => {
                     let mut bytes_to_write = 0usize;
-                    let mut wq = self.wq.split().1;
-                    while wq.ready() && bytes_to_write < self.buffer.len() {
-                        self.buffer[bytes_to_write] = wq.dequeue().unwrap();
+                    while self.wq.ready() && bytes_to_write < self.buffer.len() {
+                        self.buffer[bytes_to_write] = self.wq.dequeue().unwrap();
                         bytes_to_write += 1;
                     }
                     
@@ -230,13 +232,6 @@ impl <Spi, CsPin, IrqPin, SyncPin>  WioTerminalSPITransport<Spi, CsPin, IrqPin, 
             }
         }
     }
-
-    pub fn split<'queue>(&'queue mut self) -> (WioTerminalSPITransportTx<'queue, heapless::consts::U256>, WioTerminalSPITransportRx<'queue, heapless::consts::U256>) {
-        (
-            WioTerminalSPITransportTx { wq: self.wq.split().0 },
-            WioTerminalSPITransportRx { rq: self.rq.split().1 },
-        )
-    }
 }
 
 pub struct WioTerminalSPITransportRx<'queue, N>  
@@ -245,6 +240,15 @@ pub struct WioTerminalSPITransportRx<'queue, N>
     rq: Consumer<'queue, u8, N, u8>,
 }
 
+impl<'queue, N> WioTerminalSPITransportRx<'queue, N>
+    where N: ArrayLength<u8>
+{
+    pub fn new(rq: Consumer<'queue, u8, N, u8>) -> Self {
+        Self {
+            rq: rq,
+        }
+    }
+}
 impl<'queue, N> serial::Read<u8> for WioTerminalSPITransportRx<'queue, N>
     where N: ArrayLength<u8>
 {
@@ -265,6 +269,15 @@ pub struct WioTerminalSPITransportTx<'queue, N>
     wq: Producer<'queue, u8, N, u8>
 }
 
+impl<'queue, N> WioTerminalSPITransportTx<'queue, N>
+    where N: ArrayLength<u8>
+{
+    pub fn new(wq: Producer<'queue, u8, N, u8>) -> Self {
+        Self {
+            wq: wq,
+        }
+    }
+}
 impl<'queue, N> serial::Write<u8> for WioTerminalSPITransportTx<'queue, N>
     where N: ArrayLength<u8>
 {
